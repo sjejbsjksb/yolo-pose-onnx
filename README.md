@@ -28,16 +28,29 @@
 
 ```
 yolo-pose-onnx/
-├── best.onnx                 原始导出模型（640 输入，需 OpenCV ≥ 4.8）
-├── best_opencv46.onnx        640 输入 + OpenCV 4.6 兼容补丁
-├── best_480_opencv46.onnx    480 输入 + OpenCV 4.6 兼容补丁（推荐）
+├── best.onnx                     原始导出模型（640 输入，需 OpenCV ≥ 4.8）
+├── best_opencv46.onnx            640 输入 + OpenCV 4.6 兼容补丁
+├── best_480_opencv46.onnx        480 输入 + OpenCV 4.6 兼容补丁（推荐）
 ├── cpp/
-│   ├── main.cpp              完整 C++ 程序（取流 → 推理 → 显示）
-│   └── CMakeLists.txt        构建脚本
+│   ├── main.cpp                  完整 C++ 程序（取流 → 推理 → 显示）
+│   └── CMakeLists.txt            构建脚本
+├── docs/
+│   ├── experiment-record.docx    实验记录（环境、流程、三组对照实验数据）
+│   └── error-handling-record.docx 错误处理与资源释放记录
+├── demo/
+│   └── demo.mp4                  运行演示视频（真实相机实时检测）
 ├── tools/
-│   └── patch_onnx_opencv46.py  把模型修补成 OpenCV 4.6 可用
+│   └── patch_onnx_opencv46.py    把模型修补成 OpenCV 4.6 可用
 └── README.md
 ```
+
+## 二·补 交付文档与演示
+
+| 交付物 | 位置 | 内容 |
+| --- | --- | --- |
+| 实验记录 | [`docs/experiment-record.docx`](docs/experiment-record.docx) | 实验环境、系统设计、关键实现、**曝光/增益/图像格式三组对照实验数据与分析**、问题排查、结论 |
+| 错误处理记录 | [`docs/error-handling-record.docx`](docs/error-handling-record.docx) | 5 个异常场景的实测日志、资源释放检查表、Ctrl+C 句柄泄漏问题的发现与修复 |
+| 运行演示视频 | [`demo/demo.mp4`](demo/demo.mp4) | 真实工业相机实时检测装甲板，含检测框、置信度、关键点、FPS 与中心点坐标 |
 
 ---
 
