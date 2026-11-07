@@ -72,6 +72,12 @@ static const Scalar CLASS_COLORS[NUM_CLS] = {
     Scalar(255, 255, 0),   // 5 青
 };
 
+// 框的颜色要不要"跟着目标本身的颜色走"？
+//   true  : 从框内像素采样主色（红灯画红框、绿灯画绿框）
+//   false : 用上面 CLASS_COLORS 里按类别写死的颜色
+// 采样失败（框内太暗/太灰）时自动退回类别色
+static const bool USE_OBJECT_COLOR = true;
+
 // ---------------------------------------------------------------------------
 //  数据结构
 // ---------------------------------------------------------------------------
@@ -458,18 +464,66 @@ private:
 // ---------------------------------------------------------------------------
 //  画图
 // ---------------------------------------------------------------------------
+// 采样框内"亮且有颜色"的像素，算出目标的主色调，返回 BGR。
+// 采样不到（太暗/太灰）返回 Scalar(-1,-1,-1) 当哨兵。
+static Scalar sampleObjectColor(const Mat& img, const Rect& box, int step = 2)
+{
+    const Rect r = box & Rect(0, 0, img.cols, img.rows);
+    if (r.width < 4 || r.height < 4) return Scalar(-1, -1, -1);
+
+    Mat hsv;
+    cvtColor(img(r), hsv, COLOR_BGR2HSV);
+
+    double sx = 0.0, sy = 0.0;      // 色相的环形累加（H 是 0~180 的环）
+    long n = 0, sumS = 0, sumV = 0;
+
+    for (int y = 0; y < hsv.rows; y += step) {
+        const Vec3b* p = hsv.ptr<Vec3b>(y);
+        for (int x = 0; x < hsv.cols; x += step) {
+            const int v = p[x][2];
+            const int s = p[x][1];
+            if (v < 90 || s < 70) continue;          // 太暗或太灰，当背景丢掉
+            const double a = p[x][0] * CV_PI / 90.0;
+            sx += std::cos(a);
+            sy += std::sin(a);
+            sumS += s;
+            sumV += v;
+            ++n;
+        }
+    }
+    if (n < 20) return Scalar(-1, -1, -1);
+
+    double hue = std::atan2(sy, sx) * 90.0 / CV_PI;
+    if (hue < 0.0) hue += 180.0;
+
+    const int s = (int)std::min<long>(255, std::max<long>(140, sumS / n));
+    const int v = (int)std::min<long>(255, std::max<long>(160, sumV / n));
+
+    Mat one(1, 1, CV_8UC3, Scalar(hue, s, v));
+    Mat bgr;
+    cvtColor(one, bgr, COLOR_HSV2BGR);
+    const Vec3b c = bgr.at<Vec3b>(0, 0);
+    return Scalar(c[0], c[1], c[2]);
+}
+
 static void drawResult(Mat& img, const vector<Detection>& dets)
 {
     for (size_t i = 0; i < dets.size(); ++i) {
         const Detection& d = dets[i];
 
-        // 颜色只表示"这是第几类"，跟目标本身的颜色无关
         const int cidx = std::max(0, std::min(d.cls, NUM_CLS - 1));
-        const Scalar color = CLASS_COLORS[cidx];
         const char*  cname = CLASS_NAMES[cidx];
 
         Rect box((int)std::lround(d.box.x), (int)std::lround(d.box.y),
                  (int)std::lround(d.box.width), (int)std::lround(d.box.height));
+
+        // 颜色：默认按目标本身的颜色画，采样失败才退回类别色
+        Scalar color = CLASS_COLORS[cidx];
+        if (USE_OBJECT_COLOR) {
+            const Scalar obj = sampleObjectColor(img, box);   // 必须在画框之前采样
+            if (obj[0] >= 0.0) color = obj;
+        }
+
         rectangle(img, box, color, 2);
 
         // 4 个关键点连成四边形
