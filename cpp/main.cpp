@@ -592,6 +592,22 @@ static void drawResult(Mat& img, const vector<Detection>& dets)
                   color, FILLED);
         putText(img, text, Point(box.x + 4, ty),
                 FONT_HERSHEY_SIMPLEX, 0.6, Scalar(255, 255, 255), 1, LINE_AA);
+
+        // ---- 检测框中心点（作业进阶要求）----
+        const Point ctr((int)std::lround(d.box.x + d.box.width  * 0.5f),
+                        (int)std::lround(d.box.y + d.box.height * 0.5f));
+
+        const Scalar cCol(0, 255, 255);          // 黄色准星
+        const int L = 12;
+        line(img, Point(ctr.x - L, ctr.y), Point(ctr.x + L, ctr.y), cCol, 2, LINE_AA);
+        line(img, Point(ctr.x, ctr.y - L), Point(ctr.x, ctr.y + L), cCol, 2, LINE_AA);
+        circle(img, ctr, 3, Scalar(0, 0, 0), FILLED, LINE_AA);
+
+        char ctext[64];
+        snprintf(ctext, sizeof(ctext), "C(%d,%d)", ctr.x, ctr.y);
+        const int cy = std::min(box.y + box.height + 20, img.rows - 8);
+        putText(img, ctext, Point(box.x, cy),
+                FONT_HERSHEY_SIMPLEX, 0.55, cCol, 2, LINE_AA);
     }
 }
 
@@ -705,6 +721,24 @@ int main(int argc, char** argv)
                    accPre * k, accInfer * k, accPost * k, accUi * k,
                    (accPre + accInfer + accPost + accUi) * k);
             accPre = accInfer = accPost = accUi = 0.0;
+
+            // ---- 检测框中心点坐标（作业进阶要求：终端输出）----
+            if (dets.empty()) {
+                printf("[center] 无目标\n");
+            } else {
+                for (size_t k2 = 0; k2 < dets.size(); ++k2) {
+                    const Detection& d = dets[k2];
+                    const int cx = (int)std::lround(d.box.x + d.box.width  * 0.5f);
+                    const int cy = (int)std::lround(d.box.y + d.box.height * 0.5f);
+                    printf("[center] obj%zu  cls=%s  conf=%.2f  center=(%d, %d)  "
+                           "box=(%d,%d,%dx%d)\n",
+                           k2 + 1,
+                           CLASS_NAMES[std::max(0, std::min(d.cls, NUM_CLS - 1))],
+                           d.score, cx, cy,
+                           (int)std::lround(d.box.x), (int)std::lround(d.box.y),
+                           (int)std::lround(d.box.width), (int)std::lround(d.box.height));
+                }
+            }
         }
     }
 
