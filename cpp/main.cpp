@@ -56,6 +56,7 @@ static const float NMS_THRES  = 0.40f;   // NMS IoU 阈值
 // 相机采集参数（可用 --exposure / --gain 覆盖，做对照实验用）
 static int   g_exposureUs = 5000;    // 曝光时间 µs
 static float g_gain       = 0.0f;    // 增益 dB
+static string g_pixelFmt  = "bgr";   // bgr | rgb | bayer | mono
 
 static const char* WIN_NAME = "Industrial YOLO";
 
@@ -222,6 +223,21 @@ public:
         // 曝光 / 增益（作业要求；单位 µs，按现场亮度调 1000~20000）
         MV_CC_SetFloatValue(handle_, "ExposureTime", (float)g_exposureUs);
         MV_CC_SetFloatValue(handle_, "Gain", g_gain);
+
+        // 像素格式：图像格式对照实验用 --pixel bayer|rgb|mono 切换
+        unsigned int pf = PixelType_Gvsp_BGR8_Packed;
+        if (g_pixelFmt == "rgb")        pf = PixelType_Gvsp_RGB8_Packed;
+        else if (g_pixelFmt == "bayer") pf = PixelType_Gvsp_BayerRG8;
+        else if (g_pixelFmt == "mono")  pf = PixelType_Gvsp_Mono8;
+
+        if (MV_CC_SetEnumValue(handle_, "PixelFormat", pf) != MV_OK) {
+            printf("[MVS] 设置像素格式 %s 失败，退回 BGR8\n", g_pixelFmt.c_str());
+            if (MV_CC_SetEnumValue(handle_, "PixelFormat", PixelType_Gvsp_BGR8_Packed) != MV_OK)
+                printf("[MVS] BGR8 也失败，将按相机当前格式转换\n");
+            else
+                g_pixelFmt = "bgr";
+        }
+        printf("[INFO] 像素格式  : %s\n", g_pixelFmt.c_str());
 
         // GigE 相机设最佳包大小（USB 相机会失败，忽略）
         const int pkt = MV_CC_GetOptimalPacketSize(handle_);
@@ -673,6 +689,13 @@ int main(int argc, char** argv)
             g_exposureUs = atoi(argv[++i]);
         } else if (a == "--gain" && i + 1 < argc) {
             g_gain = (float)atof(argv[++i]);
+        } else if (a == "--pixel" && i + 1 < argc) {
+            g_pixelFmt = argv[++i];
+            if (g_pixelFmt != "bgr" && g_pixelFmt != "rgb" &&
+                g_pixelFmt != "bayer" && g_pixelFmt != "mono") {
+                printf("[参数] --pixel 只能是 bgr/rgb/bayer/mono，已用 bgr\n");
+                g_pixelFmt = "bgr";
+            }
         } else {
             videoPath = a;
         }
