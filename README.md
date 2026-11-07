@@ -62,6 +62,34 @@ net.setInput(blob);
 cv::Mat out = net.forward();   // 1 x 18 x 8400
 ```
 
+## ⚠️ OpenCV 4.6 / 4.7 兼容性问题
+
+如果你用 **OpenCV 4.6.x 或 4.7.x** 的 DNN 模块跑 `best.onnx`，会遇到：
+
+```
+OpenCV(4.6.0) .../dnn/shape_utils.hpp:171: error: (-215:Assertion failed)
+start <= (int)shape.size() && end <= (int)shape.size() && start <= end
+in function 'total'
+```
+
+`readNetFromONNX` 能成功，一 `forward()` 就抛。原因：OpenCV 4.6 的 DNN 在算
+Eltwise(Mul/Add) 的广播形状时，两个输入 rank 差超过 1 就会越界。本模型的 pose
+解码头里正好有 `[1,4,2,8400] * [1,8400]` 这种写法。
+官方在 **4.8** 修好了（[opencv/opencv#23464](https://github.com/opencv/opencv/issues/23464)）。
+
+**两个解法，二选一：**
+
+| 方案 | 做法 | 耗时 |
+| --- | --- | --- |
+| A. 用修补版模型 | 下载下面的 `best_opencv46.onnx`，重命名成 `best.onnx` 直接用 | 1 分钟 |
+| B. 升级 OpenCV | 编译安装 OpenCV ≥ 4.8 | 约 1 小时 |
+
+修补版是把那几个广播常量提前展开成完整形状（数学等价，实测输出**逐位相同**），
+体积从 9.72 MB 涨到 10.24 MB。
+
+- `best_opencv46.onnx` — SHA-256：`3684BD0F87038D846964BE155CE8FD020A932EC24EAF0A336E52CF2C23D7AC61`
+- 自己重新生成：`python tools/patch_onnx_opencv46.py best.onnx best_opencv46.onnx`（需要 `pip install onnx numpy`）
+
 ## 备注
 
 - 本仓库只存放课程作业的权重文件，不含训练代码与数据集。
