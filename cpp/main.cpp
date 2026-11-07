@@ -501,6 +501,10 @@ static void drawResult(Mat& img, const vector<Detection>& dets)
 // ---------------------------------------------------------------------------
 int main(int argc, char** argv)
 {
+    // printf 在 Qt Creator / 重定向到管道时是全缓冲的，日志会憋很久才吐。
+    // 关掉缓冲，每条日志立刻出现在「应用程序输出」里。
+    setvbuf(stdout, nullptr, _IONBF, 0);
+
     // 传一个视频文件路径就用视频代替相机，方便不接硬件时调模型
     string videoPath = (argc > 1) ? argv[1] : "";
 
