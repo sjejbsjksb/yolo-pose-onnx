@@ -180,7 +180,7 @@ public:
         ret = MV_CC_OpenDevice(handle_, MV_ACCESS_Exclusive, 0);
         if (ret != MV_OK) {
             mvsError("MV_CC_OpenDevice", ret);
-            if (ret == MV_E_ACCESS_DENIED)
+            if ((unsigned int)ret == (unsigned int)MV_E_ACCESS_DENIED)
                 printf("[MVS] 权限不足：用 sudo 运行，或检查 /etc/udev/rules.d 下的 MVS 规则。\n");
             close();
             return false;
@@ -295,9 +295,9 @@ public:
         net_.setPreferableBackend(dnn::DNN_BACKEND_OPENCV);
         net_.setPreferableTarget(dnn::DNN_TARGET_CPU);   // 虚拟机没 GPU，老实走 CPU
 
-        // Winograd 卷积加速，3x3 卷积能快 20%~40%
-        // 如果出现结果错乱或崩溃，把这一行删掉即可
-        net_.enableWinograd(true);
+        // 注意：OpenCV 4.6 没有公开的 Winograd 开关（4.8+ 才有 Net::enableWinograd），
+        // 这里只能打开算子融合，属于 4.6 能拿到的全部加速.
+        net_.enableFusion(true);
         return true;
     }
 
