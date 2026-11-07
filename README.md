@@ -90,6 +90,37 @@ Eltwise(Mul/Add) 的广播形状时，两个输入 rank 差超过 1 就会越界
 - `best_opencv46.onnx` — SHA-256：`3684BD0F87038D846964BE155CE8FD020A932EC24EAF0A336E52CF2C23D7AC61`
 - 自己重新生成：`python tools/patch_onnx_opencv46.py best.onnx best_opencv46.onnx`（需要 `pip install onnx numpy`）
 
+## C++ 客户端（海康工业相机 + OpenCV DNN）
+
+`cpp/` 目录是配套的 C++ 代码，Ubuntu 22.04 + OpenCV + MVS SDK：
+
+| 文件 | 说明 |
+| --- | --- |
+| `cpp/main.cpp` | 取流 → letterbox → DNN 推理 → 解码/NMS → 画图 → FPS，单文件 |
+| `cpp/CMakeLists.txt` | 自动探测 `main.cpp` 位置，目标名 `YoloCamera` |
+
+直接拿下来用：
+
+```bash
+cd ~/ClionProjects/YOLO
+wget -O main.cpp         https://raw.githubusercontent.com/sjejbsjksb/yolo-pose-onnx/main/cpp/main.cpp
+wget -O CMakeLists.txt   https://raw.githubusercontent.com/sjejbsjksb/yolo-pose-onnx/main/cpp/CMakeLists.txt
+```
+
+编译运行：
+
+```bash
+rm -rf cmake-build-debug && cmake -S . -B build && cmake --build build -j$(nproc)
+./build/YoloCamera            # 用相机
+./build/YoloCamera test.mp4   # 用视频调试
+```
+
+终端每 30 帧会打印分阶段耗时，用来定位帧率瓶颈：
+
+```
+[time] pre    3.2 | infer   245.1 | post   2.1 | ui   6.4 | total   256.8 ms
+```
+
 ## 备注
 
 - 本仓库只存放课程作业的权重文件，不含训练代码与数据集。
