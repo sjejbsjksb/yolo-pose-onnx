@@ -28,6 +28,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <string>
 #include <thread>
 #include <vector>
@@ -51,6 +52,10 @@ static const int   KPT_DIMS = 2;   // 每个关键点 2 个值 (x,y)，没有 co
 
 static const float CONF_THRES = 0.50f;   // 置信度阈值
 static const float NMS_THRES  = 0.40f;   // NMS IoU 阈值
+
+// 相机采集参数（可用 --exposure / --gain 覆盖，做对照实验用）
+static int   g_exposureUs = 5000;    // 曝光时间 µs
+static float g_gain       = 0.0f;    // 增益 dB
 
 static const char* WIN_NAME = "Industrial YOLO";
 
@@ -104,6 +109,16 @@ struct LetterboxInfo {
 static void mvsError(const char* api, int code)
 {
     printf("[MVS] %s 失败, code = 0x%X\n", api, (unsigned int)code);
+}
+
+// 读相机的字符串属性：型号 / 序列号 / 固件版本
+static string camString(void* h, const char* key)
+{
+    MVCC_STRINGVALUE sv;
+    memset(&sv, 0, sizeof(sv));
+    sv.nMaxLength = (int64_t)sizeof(sv.chCurValue);
+    if (MV_CC_GetStringValue(h, key, &sv) != MV_OK) return string("N/A");
+    return string(sv.chCurValue);
 }
 
 // 等比缩放 + 灰边填充，保持长宽比（比直接拉伸精度高）
@@ -196,12 +211,17 @@ public:
             return false;
         }
 
+        // 相机身份信息（作业要求写进实验记录）
+        printf("[INFO] 相机型号  : %s\n", camString(handle_, "DeviceModelName").c_str());
+        printf("[INFO] 序列号    : %s\n", camString(handle_, "DeviceSerialNumber").c_str());
+        printf("[INFO] 固件版本  : %s\n", camString(handle_, "DeviceVersion").c_str());
+
         // 连续采集
         MV_CC_SetEnumValue(handle_, "TriggerMode", MV_TRIGGER_MODE_OFF);
 
         // 曝光 / 增益（作业要求；单位 µs，按现场亮度调 1000~20000）
-        MV_CC_SetFloatValue(handle_, "ExposureTime", 5000.0f);
-        MV_CC_SetFloatValue(handle_, "Gain", 0.0f);
+        MV_CC_SetFloatValue(handle_, "ExposureTime", (float)g_exposureUs);
+        MV_CC_SetFloatValue(handle_, "Gain", g_gain);
 
         // GigE 相机设最佳包大小（USB 相机会失败，忽略）
         const int pkt = MV_CC_GetOptimalPacketSize(handle_);
@@ -228,12 +248,17 @@ public:
         int ret = MV_CC_GetImageBuffer(handle_, &fo, (unsigned int)timeoutMs);
         if (ret != MV_OK) return false;                 // 超时/断流，交给上层处理
 
+        const auto tConv0 = chrono::steady_clock::now();
+        lastPixelType = (unsigned int)fo.stFrameInfo.enPixelType;
+
         const int w = (int)fo.stFrameInfo.nWidth;
         const int h = (int)fo.stFrameInfo.nHeight;
         if (w <= 0 || h <= 0) {
             MV_CC_FreeImageBuffer(handle_, &fo);
             return false;
         }
+        lastWidth  = w;
+        lastHeight = h;
 
         const size_t need = (size_t)w * (size_t)h * 3u;
         if (buf_.size() < need) buf_.resize(need);
@@ -243,6 +268,8 @@ public:
             memcpy(buf_.data(), fo.pBufAddr, need);
             MV_CC_FreeImageBuffer(handle_, &fo);
             bgr = Mat(h, w, CV_8UC3, buf_.data());
+            lastConvertMs = chrono::duration<double, std::milli>(
+                                chrono::steady_clock::now() - tConv0).count();
             return true;
         }
 
@@ -266,8 +293,15 @@ public:
         }
 
         bgr = Mat(h, w, CV_8UC3, buf_.data());
+        lastConvertMs = chrono::duration<double, std::milli>(
+                            chrono::steady_clock::now() - tConv0).count();
         return true;
     }
+
+    // 供实验记录用的采集侧信息
+    double lastConvertMs = 0.0;      // 像素格式转换耗时（ms）
+    int    lastWidth = 0, lastHeight = 0;
+    unsigned int lastPixelType = 0;
 
     void close()
     {
@@ -620,7 +654,11 @@ int main(int argc, char** argv)
     // 关掉缓冲，每条日志立刻出现在「应用程序输出」里。
     setvbuf(stdout, nullptr, _IONBF, 0);
 
-    // 参数：--imgsz N 指定模型输入尺寸；其余任意一个参数当视频路径
+    // 参数：
+    //   --imgsz N      模型输入尺寸（不填则自动探测）
+    //   --exposure N   曝光时间 µs（对照实验用）
+    //   --gain N       增益 dB（对照实验用）
+    //   其余任意一个参数当视频路径
     string videoPath;
     for (int i = 1; i < argc; ++i) {
         const string a = argv[i];
@@ -631,6 +669,10 @@ int main(int argc, char** argv)
             } else {
                 printf("[参数] --imgsz 必须是 >=64 的 32 的倍数，已忽略\n");
             }
+        } else if (a == "--exposure" && i + 1 < argc) {
+            g_exposureUs = atoi(argv[++i]);
+        } else if (a == "--gain" && i + 1 < argc) {
+            g_gain = (float)atof(argv[++i]);
         } else {
             videoPath = a;
         }
@@ -638,6 +680,7 @@ int main(int argc, char** argv)
 
     printf("===== hik_yolo_pose =====\n");
     printf("[MAIN] 模型输入尺寸: %d x %d\n", INPUT_W, INPUT_H);
+    printf("[MAIN] 曝光 %d us | 增益 %.1f dB\n", g_exposureUs, g_gain);
 
     // 让 OpenCV 用满所有 CPU 核（虚拟机里对 FPS 有帮助）
     setNumThreads((int)std::thread::hardware_concurrency());
@@ -673,6 +716,11 @@ int main(int argc, char** argv)
 
     // 分阶段计时的累加器（每 30 帧打印一次平均值）
     double accPre = 0.0, accInfer = 0.0, accPost = 0.0, accUi = 0.0;
+    double accConv = 0.0, accE2E = 0.0;
+
+    // CPU 占用统计（进程口径）
+    double cpuLast = (double)std::clock() / (double)CLOCKS_PER_SEC;
+    auto   cpuWall0 = chrono::steady_clock::now();
 
     while (true) {
         Mat frame;
@@ -689,16 +737,22 @@ int main(int argc, char** argv)
         }
 
         vector<Detection> dets;
+
+        // 端到端耗时：从"拿到图像"到"推理结果出来"
+        const auto tE2E0 = chrono::steady_clock::now();
         model.infer(frame, dets);
+        const double e2eMs = chrono::duration<double, std::milli>(
+                                 chrono::steady_clock::now() - tE2E0).count();
 
         auto uiStart = chrono::steady_clock::now();
 
         drawResult(frame, dets);
 
         ++frameCount;
+        const double fpsNow = fps.tick();      // 每帧只取一次，避免 HUD 和日志各算一遍
         char hud[128];
         snprintf(hud, sizeof(hud), "FPS %.1f | objects %d",
-                 fps.tick(), (int)dets.size());
+                 fpsNow, (int)dets.size());
         putText(frame, hud, Point(20, 40), FONT_HERSHEY_SIMPLEX,
                 0.9, Scalar(0, 255, 0), 2, LINE_AA);
 
@@ -714,13 +768,28 @@ int main(int argc, char** argv)
         accInfer += model.msInfer;
         accPost  += model.msPost;
         accUi    += uiMs;
+        accConv  += cam.lastConvertMs;
+        accE2E   += e2eMs;
 
         if (frameCount % 30 == 0) {
             const double k = 1.0 / 30.0;
             printf("[time] pre %6.1f | infer %7.1f | post %5.1f | ui %5.1f | total %7.1f ms\n",
                    accPre * k, accInfer * k, accPost * k, accUi * k,
                    (accPre + accInfer + accPost + accUi) * k);
+
+            // CPU 占用（进程口径，多核可超过 100%）
+            const double cpuNow = (double)std::clock() / (double)CLOCKS_PER_SEC;
+            const double wall   = chrono::duration<double>(chrono::steady_clock::now() - cpuWall0).count();
+            const double cpuPct = (wall > 1e-6) ? (cpuNow - cpuLast) / wall * 100.0 : 0.0;
+            cpuLast = cpuNow;
+            cpuWall0 = chrono::steady_clock::now();
+
+            printf("[stat] fps %.1f | cpu %.0f%% | convert %.2f ms | e2e %.1f ms | %dx%d\n",
+                   fpsNow, cpuPct, accConv * k, accE2E * k,
+                   cam.lastWidth, cam.lastHeight);
+
             accPre = accInfer = accPost = accUi = 0.0;
+            accConv = accE2E = 0.0;
 
             // ---- 检测框中心点坐标（作业进阶要求：终端输出）----
             if (dets.empty()) {
