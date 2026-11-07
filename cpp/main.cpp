@@ -221,6 +221,10 @@ public:
         MV_CC_SetEnumValue(handle_, "TriggerMode", MV_TRIGGER_MODE_OFF);
 
         // 曝光 / 增益（作业要求；单位 µs，按现场亮度调 1000~20000）
+        // 必须先关自动曝光/自动增益，否则手动设的值会被相机自动覆盖，
+        // 对照实验就白做了。
+        MV_CC_SetEnumValue(handle_, "ExposureAuto", MV_EXPOSURE_AUTO_MODE_OFF);
+        MV_CC_SetEnumValue(handle_, "GainAuto",     MV_GAIN_MODE_OFF);
         MV_CC_SetFloatValue(handle_, "ExposureTime", (float)g_exposureUs);
         MV_CC_SetFloatValue(handle_, "Gain", g_gain);
 
