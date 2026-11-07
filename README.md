@@ -90,6 +90,31 @@ Eltwise(Mul/Add) 的广播形状时，两个输入 rank 差超过 1 就会越界
 - `best_opencv46.onnx` — SHA-256：`3684BD0F87038D846964BE155CE8FD020A932EC24EAF0A336E52CF2C23D7AC61`
 - 自己重新生成：`python tools/patch_onnx_opencv46.py best.onnx best_opencv46.onnx`（需要 `pip install onnx numpy`）
 
+## 三个模型版本怎么选
+
+| 文件 | 输入 | 输出 | 用途 |
+| --- | --- | --- | --- |
+| `best.onnx` | 640×640 | [1,18,8400] | 原始导出，需要 OpenCV ≥ 4.8 |
+| `best_opencv46.onnx` | 640×640 | [1,18,8400] | 打补丁版，OpenCV 4.6 可用 |
+| **`best_480_opencv46.onnx`** | **480×480** | **[1,18,4725]** | **打补丁 + 降分辨率，帧率约 ×1.7** |
+
+480 版是用 `best.pt` 重新导出的：
+
+```python
+from ultralytics import YOLO
+YOLO("best.pt").export(format="onnx", imgsz=480, opset=12, simplify=True)
+```
+
+- SHA-256：`33E350F2C743B5AE46ABAC1126CDEA8552A103EEA164DB91943B4128D391A685`
+- 输出 4725 = 60² + 30² + 15²（480 输入下三个特征层的锚点数）
+
+C++ 端**不需要手动改 `INPUT_W/H`**——程序启动时会自动探测模型输入尺寸
+（先试 `--imgsz` 指定的，再试 640/480/416/320），打印一行确认：
+
+```
+[YOLO] 模型输入尺寸: 480 x 480（自动探测）
+```
+
 ## C++ 客户端（海康工业相机 + OpenCV DNN）
 
 `cpp/` 目录是配套的 C++ 代码，Ubuntu 22.04 + OpenCV + MVS SDK：

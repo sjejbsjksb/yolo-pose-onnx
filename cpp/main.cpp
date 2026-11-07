@@ -20,11 +20,13 @@
 
 #include <opencv2/opencv.hpp>
 #include <opencv2/dnn.hpp>
+#include <opencv2/core/utils/logger.hpp>
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <thread>
@@ -38,8 +40,10 @@ using namespace cv;
 // ---------------------------------------------------------------------------
 static const char* MODEL_PATH = "best.onnx";
 
-static const int   INPUT_W = 640;
-static const int   INPUT_H = 640;
+// 模型输入尺寸：必须和导出时的 imgsz 一致！
+//   640 的模型保持默认；480 的模型用 ./YoloCamera --imgsz 480
+static int         INPUT_W = 640;
+static int         INPUT_H = 640;
 
 static const int   NUM_CLS  = 6;   // 分类头 model.23.cv3.*.2.weight 输出通道 = 6
 static const int   NUM_KPT  = 4;   // 关键点个数
@@ -304,7 +308,48 @@ public:
         // 注意：OpenCV 4.6 没有公开的 Winograd 开关（4.8+ 才有 Net::enableWinograd），
         // 这里只能打开算子融合，属于 4.6 能拿到的全部加速.
         net_.enableFusion(true);
-        return true;
+
+        // ---- 自动探测模型输入尺寸 ----
+        // 先试 --imgsz 指定的，再试常见值。用一次空推理探路，抛异常就换下一个。
+        vector<int> sizes;
+        sizes.push_back(INPUT_W);
+        const int common[] = { 640, 480, 416, 320 };
+        for (int k = 0; k < 4; ++k) {
+            const int s = common[k];
+            if (std::find(sizes.begin(), sizes.end(), s) == sizes.end())
+                sizes.push_back(s);
+        }
+
+        // 探测时会故意喂错尺寸，OpenCV 会往 stderr 刷一大坨报错，先静音
+        const utils::logging::LogLevel oldLevel =
+            utils::logging::setLogLevel(utils::logging::LOG_LEVEL_SILENT);
+
+        for (size_t i = 0; i < sizes.size(); ++i) {
+            const int s = sizes[i];
+            if (i > 0) {                       // 换尺寸 -> 必须重新建网
+                net_ = dnn::readNetFromONNX(path);
+                net_.setPreferableBackend(dnn::DNN_BACKEND_OPENCV);
+                net_.setPreferableTarget(dnn::DNN_TARGET_CPU);
+                net_.enableFusion(true);
+            }
+            try {
+                int sz[4] = { 1, 3, s, s };
+                Mat probe = Mat::zeros(4, sz, CV_32F);
+                net_.setInput(probe);
+                net_.forward();
+                INPUT_W = INPUT_H = s;
+                utils::logging::setLogLevel(oldLevel);
+                printf("[YOLO] 模型输入尺寸: %d x %d%s\n", s, s,
+                       (i == 0 ? "" : "（自动探测）"));
+                return true;
+            } catch (const cv::Exception&) {
+                // 这个尺寸不对，换下一个
+            }
+        }
+
+        utils::logging::setLogLevel(oldLevel);
+        printf("[YOLO] 640/480/416/320 都跑不通，模型有问题或没打补丁（见 README）\n");
+        return false;
     }
 
     // 各阶段耗时（毫秒），每帧刷新，main 里拿去打印
@@ -559,10 +604,24 @@ int main(int argc, char** argv)
     // 关掉缓冲，每条日志立刻出现在「应用程序输出」里。
     setvbuf(stdout, nullptr, _IONBF, 0);
 
-    // 传一个视频文件路径就用视频代替相机，方便不接硬件时调模型
-    string videoPath = (argc > 1) ? argv[1] : "";
+    // 参数：--imgsz N 指定模型输入尺寸；其余任意一个参数当视频路径
+    string videoPath;
+    for (int i = 1; i < argc; ++i) {
+        const string a = argv[i];
+        if (a == "--imgsz" && i + 1 < argc) {
+            const int v = atoi(argv[++i]);
+            if (v >= 64 && v % 32 == 0) {
+                INPUT_W = INPUT_H = v;
+            } else {
+                printf("[参数] --imgsz 必须是 >=64 的 32 的倍数，已忽略\n");
+            }
+        } else {
+            videoPath = a;
+        }
+    }
 
     printf("===== hik_yolo_pose =====\n");
+    printf("[MAIN] 模型输入尺寸: %d x %d\n", INPUT_W, INPUT_H);
 
     // 让 OpenCV 用满所有 CPU 核（虚拟机里对 FPS 有帮助）
     setNumThreads((int)std::thread::hardware_concurrency());
