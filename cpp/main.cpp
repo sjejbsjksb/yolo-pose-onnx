@@ -27,6 +27,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <csignal>
 #include <cstring>
 #include <ctime>
 #include <string>
@@ -668,11 +669,19 @@ static void drawResult(Mat& img, const vector<Detection>& dets)
 // ---------------------------------------------------------------------------
 //  main
 // ---------------------------------------------------------------------------
+// Ctrl+C 默认直接杀进程，析构函数不执行 -> 相机句柄不释放 -> 下次枚举不到设备。
+// 这里接住 SIGINT，让主循环正常退出，走 cam.close() 释放资源。
+static volatile sig_atomic_t g_interrupted = 0;
+static void onSigInt(int) { g_interrupted = 1; }
+
 int main(int argc, char** argv)
 {
     // printf 在 Qt Creator / 重定向到管道时是全缓冲的，日志会憋很久才吐。
     // 关掉缓冲，每条日志立刻出现在「应用程序输出」里。
     setvbuf(stdout, nullptr, _IONBF, 0);
+
+    // 让 Ctrl+C 走正常退出流程，保证相机句柄被释放
+    signal(SIGINT, onSigInt);
 
     // 参数：
     //   --imgsz N      模型输入尺寸（不填则自动探测）
@@ -749,7 +758,7 @@ int main(int argc, char** argv)
     double cpuLast = (double)std::clock() / (double)CLOCKS_PER_SEC;
     auto   cpuWall0 = chrono::steady_clock::now();
 
-    while (true) {
+    while (!g_interrupted) {
         Mat frame;
 
         if (useCamera) {
