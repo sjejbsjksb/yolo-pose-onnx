@@ -847,10 +847,12 @@ int main(int argc, char** argv)
         }
     }
 
+    if (g_interrupted) printf("[MAIN] 收到 Ctrl+C，正在释放相机资源...\n");
+
     cam.close();
     if (cap.isOpened()) cap.release();
     destroyAllWindows();
 
-    printf("[MAIN] 安全退出，共处理 %d 帧\n", frameCount);
+    printf("[MAIN] 相机已关闭，窗口已销毁，共处理 %d 帧\n", frameCount);
     return 0;
 }
