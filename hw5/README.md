@@ -7,6 +7,15 @@
   ✅已有      ✅已有      ✅已有     新增        新增        新增
 ```
 
+## 交付物
+
+| 交付物 | 位置 | 说明 |
+| --- | --- | --- |
+| 源码 | `calibrate.cpp` / `main.cpp` | 标定工具 + 识别/PnP/卡尔曼主程序 |
+| 实验记录 | [`docs/experiment-record.docx`](docs/experiment-record.docx) | 标定结果、角点顺序判定、PnP、卡尔曼数据与问题排查 |
+| 演示视频 | [`docs/demo.webm`](docs/demo.webm) | 真实相机实时运行：检测框、坐标轴、X/Y/Z 距离、raw/filt/pred |
+| 曲线脚本 | `plot_pose.py` | 把 `pose_log.csv` 画成 raw/filt/pred 三联图 |
+
 ## 文件
 
 | 文件 | 说明 |
@@ -14,6 +23,7 @@
 | `calibrate.cpp` | 相机标定工具，采集棋盘格图像并输出 `camera.yaml` |
 | `main.cpp` | 主程序：识别 + PnP + 卡尔曼 + 可视化 |
 | `CMakeLists.txt` | 同时构建 `Calibrate` 和 `ArmorPnP` 两个可执行文件 |
+| `plot_pose.py` | 读取 `pose_log.csv`，画出滤波前后对比图 |
 
 ## 编译
 
