@@ -74,6 +74,7 @@ static const bool USE_KEYPOINTS = true;
 static const float KF_MEAS_NOISE  = 4.0f;    // 测量噪声（mm²），越大越信模型
 static const float KF_PROC_NOISE  = 0.8f;    // 过程噪声，越大越信测量
 static const float PREDICT_HORIZON_S = 0.15f; // 预测提前量（秒）
+static const int   LOST_FRAMES       = 10;    // 连续丢失多少帧后重置卡尔曼
 
 static int   g_exposureUs = 5000;
 static float g_gain       = 0.0f;
@@ -229,6 +230,9 @@ public:
         const Point3f p = pos(), v = vel();
         return Point3f(p.x + v.x * horizon, p.y + v.y * horizon, p.z + v.z * horizon);
     }
+
+    // 目标长时间丢失时重置，否则速度会一直外推，坐标飞到天上去
+    void reset() { init(); }
 
 private:
     void setDt(float dt)
@@ -789,6 +793,7 @@ int main(int argc, char** argv)
 
     auto tStart = chrono::steady_clock::now();
     auto tLast  = tStart;
+    int  lostFrames = 0;      // 连续未检测到目标的帧数
 
     Fps fps;
     int frameCount = 0;
@@ -839,8 +844,20 @@ int main(int argc, char** argv)
         tLast = now;
         if (dt <= 0.f || dt > 1.f) dt = 0.1f;      // 异常值兜底
 
-        if (poseOk) kalman.update(dt, raw);
-        else if (kalman.inited()) kalman.predictOnly(dt);
+        if (poseOk) {
+            kalman.update(dt, raw);
+            lostFrames = 0;
+        } else if (kalman.inited()) {
+            // 短期预测是合理的，但目标丢失太久还外推，坐标会飞到天上
+            if (++lostFrames > LOST_FRAMES) {
+                kalman.reset();
+                if (lostFrames == LOST_FRAMES + 1)
+                    printf("[pose] 目标丢失超过 %d 帧（约 %.1f s），卡尔曼已重置\n",
+                           LOST_FRAMES, LOST_FRAMES * dt);
+            } else {
+                kalman.predictOnly(dt);
+            }
+        }
 
         const Point3f filt = kalman.pos();
         const Point3f pred = kalman.predictAhead(PREDICT_HORIZON_S);
