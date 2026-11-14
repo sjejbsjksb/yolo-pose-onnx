@@ -550,6 +550,85 @@ static bool solveArmorPose(const vector<Point2f>& imgPts,
     return true;
 }
 
+// 重投影平均误差（像素），衡量这个角点顺序对不对
+static double reprojectionError(const vector<Point3f>& objPts,
+                                const vector<Point2f>& imgPts,
+                                const Mat& K, const Mat& D,
+                                const Mat& rvec, const Mat& tvec)
+{
+    vector<Point2f> proj;
+    projectPoints(objPts, rvec, tvec, K, D, proj);
+    double sum = 0.0;
+    for (size_t i = 0; i < imgPts.size(); ++i)
+        sum += std::sqrt((proj[i].x - imgPts[i].x) * (proj[i].x - imgPts[i].x) +
+                         (proj[i].y - imgPts[i].y) * (proj[i].y - imgPts[i].y));
+    return sum / (double)imgPts.size();
+}
+
+// 模型的 4 个关键点顺序不一定是「左上→右上→右下→左下」。
+// 这里生成 8 种候选（4 种轮转 × 是否镜像），选重投影误差最小的那个。
+// 只用一帧确定，之后固定用同一个顺序，保证多帧之间一致。
+static bool solveArmorPoseAuto(const vector<Point2f>& imgPts,
+                               const Mat& K, const Mat& D,
+                               Mat& rvec, Mat& tvec, int& orderIdx)
+{
+    if (imgPts.size() != 4) return false;
+
+    const vector<Point3f> base = makeArmorObjectPoints();   // TL, TR, BR, BL
+
+    static bool  locked = false;
+    static int   lockedIdx = 0;
+
+    int    bestIdx = lockedIdx;
+    double bestErr = 1e18;
+    Mat    bestR, bestT;
+    bool   found = false;
+
+    const int start = locked ? lockedIdx : 0;
+    const int end   = locked ? lockedIdx + 1 : 8;
+
+    for (int idx = start; idx < end; ++idx) {
+        const int flip = idx / 4;          // 0: 正常  1: 镜像
+        const int rot  = idx % 4;          // 轮转
+
+        vector<Point3f> v = base;
+        if (flip) reverse(v.begin() + 1, v.end());   // TL, BL, BR, TR
+
+        vector<Point3f> obj(4);
+        for (int i = 0; i < 4; ++i) obj[i] = v[(i + rot) % 4];
+
+        Mat r, t;
+        if (!solveArmorPose(imgPts, obj, K, D, r, t)) continue;
+
+        const double err = reprojectionError(obj, imgPts, K, D, r, t);
+        if (err < bestErr) {
+            bestErr = err;
+            bestIdx = idx;
+            bestR = r.clone();
+            bestT = t.clone();
+            found = true;
+        }
+    }
+
+    if (!found) return false;
+
+    if (!locked) {
+        // 只有拟合得足够好才锁定顺序，避免第一帧质量差导致锁错
+        if (bestErr < 3.0) {
+            locked = true;
+            lockedIdx = bestIdx;
+            printf("[PnP] 角点顺序自动判定: 镜像=%s 轮转=%d  (重投影 %.2f px)\n",
+                   (bestIdx / 4) ? "是" : "否", bestIdx % 4, bestErr);
+        }
+        orderIdx = bestIdx;
+    } else {
+        orderIdx = lockedIdx;
+    }
+    rvec = bestR;
+    tvec = bestT;
+    return true;
+}
+
 // 画坐标轴：X 红 / Y 绿 / Z 蓝，长度 axisLenMm
 static void drawAxes(Mat& img, const Mat& K, const Mat& D,
                      const Mat& rvec, const Mat& tvec, float axisLenMm)
@@ -682,8 +761,6 @@ int main(int argc, char** argv)
                    "      先运行 ./Calibrate 采集棋盘格并标定。\n", CALIB_YAML);
     }
 
-    const vector<Point3f> objPts = makeArmorObjectPoints();
-
     PoseModel model;
     if (!model.load(MODEL_PATH)) return -1;
 
@@ -738,7 +815,8 @@ int main(int argc, char** argv)
                             Point2f(b.x, b.y + b.height) };
             }
 
-            if (corners.size() == 4 && solveArmorPose(corners, objPts, K, D, rvec, tvec)) {
+            static int kptOrder = 0;
+            if (corners.size() == 4 && solveArmorPoseAuto(corners, K, D, rvec, tvec, kptOrder)) {
                 raw = Point3f((float)tvec.at<double>(0),
                               (float)tvec.at<double>(1),
                               (float)tvec.at<double>(2));

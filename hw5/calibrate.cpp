@@ -23,6 +23,7 @@
 #include <opencv2/opencv.hpp>
 #include <opencv2/core/utils/logger.hpp>
 
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -178,9 +179,14 @@ private:
     vector<unsigned char> buf_;
 };
 
+// Ctrl+C 也能正常收尾（不然按不了 ESC 时只能强杀，白采）
+static volatile sig_atomic_t g_stop = 0;
+static void onSigInt(int) { g_stop = 1; }
+
 int main(int argc, char** argv)
 {
     setvbuf(stdout, nullptr, _IONBF, 0);
+    signal(SIGINT, onSigInt);
 
     for (int i = 1; i < argc; ++i) {
         const string a = argv[i];
@@ -217,7 +223,7 @@ int main(int argc, char** argv)
     bool running = true;
     int  diagCount = 0;
 
-    while (running) {
+    while (running && !g_stop) {
         Mat frame;
         if (!cam.grab(frame)) { if ((waitKey(1) & 0xFF) == 27) break; continue; }
         imageSize = frame.size();
@@ -280,7 +286,9 @@ int main(int argc, char** argv)
             snprintf(fn, sizeof(fn), "%s/view_%02d.png", IMG_DIR, saved);
             imwrite(fn, frame);
             printf("[CAP] 已保存第 %d 张: %s\n", saved, fn);
-        } else if (key == 27) {
+        } else if (key == 27 || key == 'q' || key == 'Q') {
+            // 焦点不在图像窗口时 ESC 收不到，q 是备用；Ctrl+C 由信号处理兜底
+            printf("[CAP] 结束采集，共 %d 张\n", saved);
             running = false;
         }
     }
