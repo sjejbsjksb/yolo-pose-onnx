@@ -601,8 +601,17 @@ static bool solveArmorPoseAuto(const vector<Point2f>& imgPts,
         if (!solveArmorPose(imgPts, obj, K, D, r, t)) continue;
 
         const double err = reprojectionError(obj, imgPts, K, D, r, t);
-        if (err < bestErr) {
-            bestErr = err;
+
+        // 先验：装甲板是竖直摆放的，板坐标系的 Y 轴（向下）投影后应该朝下。
+        // 矩形有 360° 对称性，光看重投影误差区分不了 180° 翻转，用这个打破歧义。
+        vector<Point3f> yTip = { Point3f(0, 0, 0), Point3f(0, ARMOR_H_MM * 0.5f, 0) };
+        vector<Point2f> yp;
+        projectPoints(yTip, r, t, K, D, yp);
+        const bool   yDown = (yp[1].y > yp[0].y);
+        const double score = err + (yDown ? 0.0 : 5.0);
+
+        if (score < bestErr) {
+            bestErr = score;
             bestIdx = idx;
             bestR = r.clone();
             bestT = t.clone();
@@ -673,7 +682,7 @@ static void drawHud(Mat& img, const vector<Detection>& dets, double fps,
         if (poly.size() >= 3) polylines(img, poly, true, color, 1, LINE_AA);
         for (size_t k = 0; k < poly.size(); ++k) {
             circle(img, poly[k], 4, color, -1, LINE_AA);
-            char idx[16]; snprintf(idx, sizeof(idx), "%zu", k);
+            char idx[32]; snprintf(idx, sizeof(idx), "%zu", k);
             putText(img, idx, poly[k] + Point(6, -6), FONT_HERSHEY_SIMPLEX, 0.45, color, 1, LINE_AA);
         }
         snprintf(buf, sizeof(buf), "cls%d %.2f", d.cls, d.score);
